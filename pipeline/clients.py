@@ -1,4 +1,4 @@
-"""Lazily-constructed external clients (Mongo, Voyage, S3, SQS).
+"""Lazily-constructed external clients (Mongo, Voyage, S3, SQS, Azure OpenAI).
 
 Clients are built on first use and cached per-process, so importing an activity
 module never opens a socket. Activities run in the worker process (outside the
@@ -15,6 +15,7 @@ from .config import settings
 if TYPE_CHECKING:  # avoid importing heavy deps at module load
     import boto3
     import voyageai
+    from openai import AsyncAzureOpenAI
     from pymongo import MongoClient
 
 
@@ -74,3 +75,25 @@ def sqs_client():
     import boto3
 
     return boto3.client("sqs", **_aws_kwargs())
+
+
+@lru_cache(maxsize=1)
+def azure_openai_client() -> "AsyncAzureOpenAI":
+    """Async Azure OpenAI client for the durable research agent.
+
+    Raises RuntimeError if the required Azure OpenAI env vars are not configured.
+    Used by agent/api.py and pipeline/worker.py to call set_default_openai_client()
+    so the OpenAI Agents SDK transparently routes all model calls through Azure.
+    """
+    from openai import AsyncAzureOpenAI
+
+    if not settings.azure_openai_endpoint or not settings.azure_openai_api_key:
+        raise RuntimeError(
+            "Azure OpenAI is not configured. "
+            "Set AZURE_OPENAI_ENDPOINT and AZURE_OPENAI_API_KEY in .env."
+        )
+    return AsyncAzureOpenAI(
+        azure_endpoint=settings.azure_openai_endpoint,
+        api_key=settings.azure_openai_api_key,
+        api_version=settings.azure_openai_api_version,
+    )
