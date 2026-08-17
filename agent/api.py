@@ -10,11 +10,11 @@ Run:  uv run python -m agent.api
 from __future__ import annotations
 
 import logging
-import os
 import uuid
 from datetime import timedelta
 
 import uvicorn
+from agents import set_default_openai_client
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -22,6 +22,7 @@ from temporalio.client import Client
 from temporalio.contrib.openai_agents import ModelActivityParameters, OpenAIAgentsPlugin
 
 from infra.create_atlas_index import ensure_atlas_indexes, ensure_collections_and_indexes
+from pipeline.clients import azure_openai_client
 from pipeline.config import settings
 
 app = FastAPI(title="Temporal deep agent")
@@ -56,7 +57,7 @@ async def ensure_index_on_startup() -> None:
 
 @app.get("/health")
 async def health() -> dict:
-    return {"ok": True, "agent_model": settings.agent_model}
+    return {"ok": True, "agent_model": settings.azure_openai_deployment}
 
 
 _agent_client: Client | None = None
@@ -64,10 +65,13 @@ _agent_client: Client | None = None
 
 async def _get_agent_client() -> Client:
     """Temporal client configured with the OpenAI Agents plugin — matches the worker's
-    data converter so agent-workflow results decode correctly."""
+    data converter so agent-workflow results decode correctly.
+
+    Routes all model calls through Azure OpenAI via set_default_openai_client().
+    """
     global _agent_client
     if _agent_client is None:
-        os.environ.setdefault("OPENAI_API_KEY", settings.openai_api_key)
+        set_default_openai_client(azure_openai_client())
         _agent_client = await Client.connect(
             settings.temporal_address,
             namespace=settings.temporal_namespace,
@@ -90,10 +94,13 @@ class ResearchRequest(BaseModel):
 async def research(req: ResearchRequest) -> dict:
     """Start the durable research agent (OpenAI Agents SDK on Temporal). Returns the workflow
     id immediately; poll GET /research/{workflow_id} for live progress and the final answer."""
-    if not settings.openai_api_key:
+    if not settings.azure_openai_endpoint or not settings.azure_openai_api_key:
         raise HTTPException(
             status_code=503,
-            detail="Research agent unavailable: set OPENAI_API_KEY in .env and restart the worker.",
+            detail=(
+                "Research agent unavailable: set AZURE_OPENAI_ENDPOINT and "
+                "AZURE_OPENAI_API_KEY in .env and restart the worker."
+            ),
         )
     client = await _get_agent_client()
     wf_id = f"agent-{uuid.uuid4().hex[:16]}"

@@ -32,7 +32,9 @@ help: ## Show this help
 	@grep -E '^[a-zA-Z0-9_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
 		| sort | awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
 	@echo
-	@echo "One-shot:   make start   (infra + temporal + worker + trigger-api + agent-api)"
+	@echo "Prereqs:    make check-deps          (verify all CLI tools are present)"
+	@echo "            make install-temporal    (install Temporal CLI if missing)"
+	@echo "One-shot:   make start              (infra + temporal + worker + trigger-api + agent-api)"
 	@echo "Then:       make index (once) ; make seed ; make agent-ui"
 	@echo "Teardown:   make stop"
 
@@ -40,8 +42,64 @@ help: ## Show this help
 # Setup
 # ---------------------------------------------------------------------------
 
+.PHONY: install-temporal
+install-temporal: ## Install the Temporal CLI (macOS: brew; Linux: official install script) and refresh PATH
+	@if command -v temporal >/dev/null 2>&1; then \
+		echo "temporal already installed: $$(temporal --version)"; \
+	elif [ "$$(uname)" = "Darwin" ] && command -v brew >/dev/null 2>&1; then \
+		echo "installing temporal via Homebrew..."; \
+		brew install temporal; \
+	else \
+		echo "installing temporal via official install script..."; \
+		curl -sSf https://temporal.download/cli.sh | sh; \
+		TEMPORAL_BIN="$$HOME/.temporalio/bin"; \
+		SHELL_RC=""; \
+		if [ -n "$$ZSH_VERSION" ] || [ "$$(basename "$$SHELL")" = "zsh" ]; then \
+			SHELL_RC="$$HOME/.zshrc"; \
+		elif [ -f "$$HOME/.bashrc" ]; then \
+			SHELL_RC="$$HOME/.bashrc"; \
+		elif [ -f "$$HOME/.bash_profile" ]; then \
+			SHELL_RC="$$HOME/.bash_profile"; \
+		fi; \
+		if [ -n "$$SHELL_RC" ]; then \
+			if ! grep -q "$$TEMPORAL_BIN" "$$SHELL_RC" 2>/dev/null; then \
+				echo "export PATH=\"\$$PATH:$$TEMPORAL_BIN\"" >> "$$SHELL_RC"; \
+				echo "temporal: added $$TEMPORAL_BIN to PATH in $$SHELL_RC"; \
+			else \
+				echo "temporal: $$TEMPORAL_BIN already in $$SHELL_RC"; \
+			fi; \
+		fi; \
+		export PATH="$$PATH:$$TEMPORAL_BIN"; \
+		echo "temporal: PATH refreshed for this session — restart your shell or run: export PATH=\"\$$PATH:$$TEMPORAL_BIN\""; \
+	fi
+
+.PHONY: check-deps
+check-deps: ## Verify required CLI tools are installed (fails fast with install hints)
+	@command -v temporal >/dev/null 2>&1 || { \
+		echo "ERROR: 'temporal' CLI not found."; \
+		echo "  Install via:  make install-temporal"; \
+		echo "  Or manually:  https://docs.temporal.io/cli#install"; \
+		exit 1; \
+	}
+	@command -v uv >/dev/null 2>&1 || { \
+		echo "ERROR: 'uv' not found."; \
+		echo "  Install via:  https://docs.astral.sh/uv/getting-started/installation/"; \
+		exit 1; \
+	}
+	@command -v docker >/dev/null 2>&1 || { \
+		echo "ERROR: 'docker' not found."; \
+		echo "  Install via:  https://docs.docker.com/get-docker/"; \
+		exit 1; \
+	}
+	@command -v npm >/dev/null 2>&1 || { \
+		echo "ERROR: 'npm' not found."; \
+		echo "  Install via:  https://nodejs.org/en/download/"; \
+		exit 1; \
+	}
+	@echo "all required dependencies found."
+
 .PHONY: install
-install: ## Install Python deps with uv
+install: install-temporal ## Install Temporal CLI + Python deps with uv
 	uv sync
 
 .env: ## Create .env from the example if missing
@@ -114,7 +172,7 @@ agent-ui: ## Run the React (Vite) deep-agent UI
 # ---------------------------------------------------------------------------
 
 .PHONY: start
-start: install .env infra-up ## Start everything in the background (NO_WORKER=1 skips the worker so you can run 'make worker' in the foreground)
+start: install check-deps .env infra-up ## Start everything in the background (NO_WORKER=1 skips the worker so you can run 'make worker' in the foreground)
 	@mkdir -p $(LOGDIR)
 	@if bash -c 'exec 3<>/dev/tcp/127.0.0.1/7233' 2>/dev/null; then \
 		echo "temporal: already running on :7233 — reusing it"; \
