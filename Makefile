@@ -43,7 +43,7 @@ help: ## Show this help
 # ---------------------------------------------------------------------------
 
 .PHONY: install-temporal
-install-temporal: ## Install the Temporal CLI (macOS: brew; Linux: official install script)
+install-temporal: ## Install the Temporal CLI (macOS: brew; Linux: official install script) and refresh PATH
 	@if command -v temporal >/dev/null 2>&1; then \
 		echo "temporal already installed: $$(temporal --version)"; \
 	elif [ "$$(uname)" = "Darwin" ] && command -v brew >/dev/null 2>&1; then \
@@ -52,7 +52,25 @@ install-temporal: ## Install the Temporal CLI (macOS: brew; Linux: official inst
 	else \
 		echo "installing temporal via official install script..."; \
 		curl -sSf https://temporal.download/cli.sh | sh; \
-		echo "NOTE: add ~/.temporalio/bin to your PATH if not already set"; \
+		TEMPORAL_BIN="$$HOME/.temporalio/bin"; \
+		SHELL_RC=""; \
+		if [ -n "$$ZSH_VERSION" ] || [ "$$(basename "$$SHELL")" = "zsh" ]; then \
+			SHELL_RC="$$HOME/.zshrc"; \
+		elif [ -f "$$HOME/.bashrc" ]; then \
+			SHELL_RC="$$HOME/.bashrc"; \
+		elif [ -f "$$HOME/.bash_profile" ]; then \
+			SHELL_RC="$$HOME/.bash_profile"; \
+		fi; \
+		if [ -n "$$SHELL_RC" ]; then \
+			if ! grep -q "$$TEMPORAL_BIN" "$$SHELL_RC" 2>/dev/null; then \
+				echo "export PATH=\"\$$PATH:$$TEMPORAL_BIN\"" >> "$$SHELL_RC"; \
+				echo "temporal: added $$TEMPORAL_BIN to PATH in $$SHELL_RC"; \
+			else \
+				echo "temporal: $$TEMPORAL_BIN already in $$SHELL_RC"; \
+			fi; \
+		fi; \
+		export PATH="$$PATH:$$TEMPORAL_BIN"; \
+		echo "temporal: PATH refreshed for this session — restart your shell or run: export PATH=\"\$$PATH:$$TEMPORAL_BIN\""; \
 	fi
 
 .PHONY: check-deps
