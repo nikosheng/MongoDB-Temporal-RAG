@@ -2,9 +2,8 @@
 
 The agent's reasoning loop runs inside this Temporal workflow; the model calls and the
 vector_search / rerank tools execute as activities, so the whole trajectory is durable and
-auditable in the Temporal UI. A hosted web-search tool supplements the docs — it runs inside
-the model-call activity (OpenAI Responses API), not as a separate activity. Live progress is
-exposed via the `progress` query (run hooks append human-readable steps as the agent works).
+auditable in the Temporal UI. All model calls are routed through Azure OpenAI. Live progress
+is exposed via the `progress` query (run hooks append human-readable steps as the agent works).
 """
 
 from __future__ import annotations
@@ -14,7 +13,7 @@ from datetime import timedelta
 from temporalio import workflow
 
 with workflow.unsafe.imports_passed_through():
-    from agents import Agent, RunHooks, Runner, WebSearchTool
+    from agents import Agent, RunHooks, Runner
     from temporalio.contrib.openai_agents.workflow import activity_as_tool
 
     from pipeline.config import settings
@@ -24,29 +23,28 @@ with workflow.unsafe.imports_passed_through():
 
 _INSTRUCTIONS = (
     "You are a precise research assistant answering questions about Temporal, backed by a "
-    "MongoDB Atlas knowledge base of Temporal documentation plus web search.\n"
-    "- Prefer the ingested docs: decompose any multi-part or comparative question into its "
-    "distinct sub-topics and call `vector_search_tool` SEPARATELY for each sub-topic with a "
-    "focused query — do not cover several concepts in one broad search. For a genuinely "
-    "single-topic question, one search is fine.\n"
-    "- If a search returns thin or off-target results, reformulate the query and search again.\n"
+    "MongoDB Atlas knowledge base of Temporal documentation.\n"
+    "- Decompose any multi-part or comparative question into its distinct sub-topics and call "
+    "`vector_search_tool` SEPARATELY for each sub-topic with a focused query — do not cover "
+    "several concepts in one broad search. For a genuinely single-topic question, one search "
+    "is fine.\n"
+    "- If a search returns thin or off-target results, reformulate the query and try again "
+    "(up to 2 retries per sub-topic).\n"
     "- Call `rerank_tool` with the collected chunk_ids to prioritize the best chunks before "
     "answering.\n"
-    "- Use web search to SUPPLEMENT the docs: for very recent changes, topics the knowledge "
-    "base does not cover, or to corroborate a claim. The ingested docs are authoritative for "
-    "how Temporal works — prefer them over the open web when they conflict.\n"
-    "- Answer from your gathered sources. Cite inline as [n]: give the source_uri for "
-    "knowledge-base chunks and the URL for web results, address each sub-topic, and make clear "
-    "which claims came from the docs vs the web. If neither contains the answer, say so plainly."
+    "- Answer ONLY from the retrieved chunks. Cite inline as [n] with the source_uri of the "
+    "chunk. Address each sub-topic in turn.\n"
+    "- STRICT RULE: if the retrieved chunks do not contain sufficient information to answer "
+    "the question — or if no relevant chunks are returned — respond with exactly: "
+    "'I cannot provide an answer based on the available knowledge base.' "
+    "Do NOT speculate, infer beyond what the sources state, or supplement with general "
+    "knowledge. Never fabricate citations or content."
 )
 
 # Human-readable progress labels keyed by tool name/type.
 _TOOL_LABELS = {
     "vector_search_tool": "Searching the docs…",
     "rerank_tool": "Reranking results…",
-    "WebSearchTool": "Searching the web…",
-    "web_search": "Searching the web…",
-    "web_search_call": "Searching the web…",
 }
 
 
@@ -88,7 +86,7 @@ class DeepResearchAgent:
             "steps": list(self._steps),
             "tool_calls": list(self._tool_calls),
             "answer": self._answer,
-            "model": settings.agent_model,
+            "model": settings.azure_openai_deployment,
             "done": self._done,
         }
 
@@ -96,16 +94,13 @@ class DeepResearchAgent:
     async def run(self, query: str) -> dict:
         agent = Agent(
             name="Temporal docs researcher",
-            model=settings.agent_model,
+            model=settings.azure_openai_deployment,
             instructions=_INSTRUCTIONS,
             tools=[
                 activity_as_tool(
                     vector_search_tool, start_to_close_timeout=timedelta(seconds=30)
                 ),
                 activity_as_tool(rerank_tool, start_to_close_timeout=timedelta(seconds=30)),
-                # Hosted tool: runs inside the model-call activity (OpenAI Responses API),
-                # not as a separate Temporal activity. Requires a web-search-capable model.
-                WebSearchTool(),
             ],
         )
         result = await Runner.run(
@@ -120,7 +115,6 @@ class DeepResearchAgent:
             for item in getattr(result, "new_items", []):
                 if type(item).__name__ == "ToolCallItem":
                     raw = getattr(item, "raw_item", None)
-                    # function tools expose `.name`; hosted tools (web search) expose `.type`
                     label = getattr(raw, "name", None) or getattr(raw, "type", None)
                     if label:
                         self._tool_calls.append(label)
@@ -133,7 +127,7 @@ class DeepResearchAgent:
         return {
             "query": query,
             "answer": self._answer,
-            "model": settings.agent_model,
+            "model": settings.azure_openai_deployment,
             "tool_calls": list(self._tool_calls),
         }
 

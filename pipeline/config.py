@@ -64,10 +64,14 @@ class Settings(BaseSettings):
     voyage_rerank_model: str = "rerank-2.5"
     embed_dim: int = 1024
 
-    # ---- OpenAI (durable research agent — OpenAI Agents SDK on Temporal) ----
-    openai_api_key: str = ""
-    agent_model: str = "gpt-4.1"  # OpenAI model for the agent loop; adjust to a current one
-    agent_max_turns: int = 8  # guardrail on the tool-use loop
+    # ---- Azure OpenAI (durable research agent — OpenAI Agents SDK on Temporal) ----
+    # All four fields are required to enable the durable research agent.
+    azure_openai_endpoint: str = ""        # e.g. https://<resource>.openai.azure.com/
+    azure_openai_api_key: str = ""
+    azure_openai_api_version: str = "2024-12-01-preview"
+    azure_openai_deployment: str = "gpt-4o"  # deployment name for the agent reasoning loop
+    agent_model: str = "gpt-4o"              # kept for progress reporting in workflow queries
+    agent_max_turns: int = 8                 # guardrail on the tool-use loop
 
     # ---- Service ports ----
     trigger_api_port: int = 8088

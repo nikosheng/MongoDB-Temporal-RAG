@@ -76,7 +76,7 @@ export default function App() {
     <div className="app">
       <header>
         <h1>Temporal Docs — Research Agent</h1>
-        <p className="sub">Durable OpenAI agent on Temporal · vector search + rerank + web search</p>
+        <p className="sub">Durable Azure OpenAI agent on Temporal · vector search + rerank</p>
       </header>
 
       <form
